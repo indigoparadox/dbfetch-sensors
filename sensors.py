@@ -25,20 +25,37 @@ class SensorThread( threading.Thread ):
 
         logger = logging.getLogger( 'sensors.run' )
 
+        logger.info( 'sensor thread starting...' )
+
         while self.running:
 
-            with self.lock:
-                self.airq = self.pm25.read()
-                new_airq = {}
-                for key in self.airq:
-                    new_key = key.replace( ' ', '_' )
-                    val = self.airq[key]
-                    new_airq[new_key] = val
-                self.airq = new_airq
-                self.airq['tvoc'] = self.sgp40.raw
-                self.airq['timestamp'] = int( time.time() )
+            new_airq = {}
 
-                logger.debug( 'updating...' )
+            try:
+                pm25_airq = self.pm25.read()
+
+                # Sanitize pm25 keys.
+                for key in pm25_airq:
+                    new_key = key.replace( ' ', '_' )
+                    new_airq[new_key] = pm25_airq[key]
+
+            except Exception as e:
+                logger.error( 'error updating air quality pm25: {}'.format(
+                    e ) )
+
+            try:
+                new_airq['tvoc'] = self.sgp40.raw
+
+            except Exception as e:
+                logger.error( 'error updating air quality tvoc: {}'.format(
+                    e ) )
+
+            new_airq['timestamp'] = int( time.time() )
+
+            with self.lock:
+                self.airq = new_airq
+
+            logger.debug( 'updating...' )
 
             time.sleep( 5 )
 
@@ -52,6 +69,7 @@ class SensorHTTPHandler( SimpleHTTPRequestHandler ):
         self.send_header( 'Content-type', 'text/json' )
         self.end_headers()
 
+        airq = {}
         airq = self.server.sensor_thread.airq
         logger.debug( 'response readings updated {}...'.format(
             airq['timestamp'] ) )
@@ -71,7 +89,7 @@ def main():
 
     args = parser.parse_args()
 
-    level = logging.ERROR
+    level = logging.INFO
     if args.verbose:
         level=logging.DEBUG
     logging.basicConfig( level=level )
@@ -86,6 +104,7 @@ def main():
     server = ThreadingHTTPServer( listen, SensorHTTPHandler )
     server.sensor_thread = SensorThread( i2c )
     server.sensor_thread.start()
+    l.info( 'web server starting...' )
     server.serve_forever()
 
 if '__main__' == __name__:
